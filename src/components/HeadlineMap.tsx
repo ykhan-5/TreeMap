@@ -252,26 +252,35 @@ export default function HeadlineMap({ initialData }: Props) {
   return (
     <div className="flex flex-col h-full">
       {/* ── Header ── */}
-      <header className="flex items-center justify-between px-5 py-3 border-b border-gray-800 shrink-0">
-        <div>
-          <h1 className="text-lg font-bold text-white tracking-tight">Internet Headline Map</h1>
-          <p className="text-xs text-gray-500 mt-0.5">What the world is talking about right now</p>
-        </div>
-
-        <div className="flex items-center gap-2 flex-wrap justify-end">
-          {/* Legend */}
-          <div className="hidden lg:flex items-center gap-3 text-xs text-gray-500 mr-2">
-            <span className="flex items-center gap-1.5"><span className="inline-block w-2.5 h-2.5 rounded-sm bg-green-500" />rising</span>
-            <span className="flex items-center gap-1.5"><span className="inline-block w-2.5 h-2.5 rounded-sm bg-gray-600" />stable</span>
-            <span className="flex items-center gap-1.5"><span className="inline-block w-2.5 h-2.5 rounded-sm bg-red-500" />falling</span>
-            <span className="text-gray-700">·</span>
-            <span>size = sources</span>
+      <header className="shrink-0 border-b border-gray-800">
+        {/* Row 1: title + secondary actions */}
+        <div className="flex items-center justify-between px-4 py-2.5">
+          <div className="min-w-0">
+            <h1 className="text-base font-bold text-white tracking-tight leading-tight">Internet Headline Map</h1>
+            <p className="text-xs text-gray-500 hidden sm:block">What the world is talking about right now</p>
           </div>
 
-          {fetchedAt && <span className="hidden sm:block text-xs text-gray-600 mr-1">{formatTime(fetchedAt)}</span>}
+          <div className="flex items-center gap-2 ml-3 shrink-0">
+            {/* Legend — desktop only */}
+            <div className="hidden lg:flex items-center gap-3 text-xs text-gray-500 mr-1">
+              <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-sm bg-green-500" />rising</span>
+              <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-sm bg-gray-600" />stable</span>
+              <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-sm bg-red-500" />falling</span>
+              <span className="text-gray-700">·</span>
+              <span>size = sources</span>
+            </div>
 
+            {fetchedAt && <span className="hidden md:block text-xs text-gray-600">{formatTime(fetchedAt)}</span>}
+            <button onClick={() => setShowSources(true)} className="hidden sm:block text-xs px-2.5 py-1.5 rounded bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-white transition-colors">Sources</button>
+            <button onClick={handleScreenshot} disabled={screenshotting || words.length === 0} className="hidden sm:block text-xs px-2.5 py-1.5 rounded bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed">{screenshotting ? "Saving…" : "Screenshot"}</button>
+            <button onClick={handleRefresh} disabled={loading} className="text-xs px-3 py-1.5 rounded bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed">{loading ? "…" : "Refresh"}</button>
+          </div>
+        </div>
+
+        {/* Row 2: time windows + view toggle (always visible, scrollable on very small screens) */}
+        <div className="flex items-center gap-2 px-4 pb-2.5 overflow-x-auto scrollbar-none">
           {/* Time window segmented control */}
-          <div className="flex rounded overflow-hidden border border-gray-700 text-xs">
+          <div className="flex rounded overflow-hidden border border-gray-700 text-xs shrink-0">
             {TIME_WINDOWS.map((tw, i) => (
               <button
                 key={tw.value}
@@ -284,14 +293,13 @@ export default function HeadlineMap({ initialData }: Props) {
           </div>
 
           {/* Flat / By Category toggle */}
-          <div className="flex rounded overflow-hidden border border-gray-700 text-xs">
-            <button onClick={() => setGrouped(false)} className={`px-3 py-1.5 transition-colors ${!grouped ? "bg-gray-600 text-white" : "bg-gray-800 text-gray-400 hover:text-white"}`}>Flat</button>
-            <button onClick={() => setGrouped(true)} className={`px-3 py-1.5 border-l border-gray-700 transition-colors ${grouped ? "bg-gray-600 text-white" : "bg-gray-800 text-gray-400 hover:text-white"}`}>By Category</button>
+          <div className="flex rounded overflow-hidden border border-gray-700 text-xs shrink-0">
+            <button onClick={() => setGrouped(false)} className={`px-2.5 py-1.5 transition-colors ${!grouped ? "bg-gray-600 text-white" : "bg-gray-800 text-gray-400 hover:text-white"}`}>Flat</button>
+            <button onClick={() => setGrouped(true)} className={`px-2.5 py-1.5 border-l border-gray-700 transition-colors ${grouped ? "bg-gray-600 text-white" : "bg-gray-800 text-gray-400 hover:text-white"}`}>By Category</button>
           </div>
 
-          <button onClick={() => setShowSources(true)} className="text-xs px-3 py-1.5 rounded bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-white transition-colors">Sources</button>
-          <button onClick={handleScreenshot} disabled={screenshotting || words.length === 0} className="text-xs px-3 py-1.5 rounded bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed">{screenshotting ? "Saving…" : "Screenshot"}</button>
-          <button onClick={handleRefresh} disabled={loading} className="text-xs px-3 py-1.5 rounded bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed">{loading ? "Loading…" : "Refresh"}</button>
+          {/* Sources — mobile only (hidden on sm+ where it's in row 1) */}
+          <button onClick={() => setShowSources(true)} className="sm:hidden text-xs px-2.5 py-1.5 rounded bg-gray-800 text-gray-400 hover:text-white transition-colors shrink-0">Sources</button>
         </div>
       </header>
 

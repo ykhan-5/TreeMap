@@ -5,7 +5,7 @@ import { getCachedHeadlines, getPrevCounts, setCachedData, getWordHistory } from
 import type { Headline } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 30;
+export const maxDuration = 10;
 
 const WINDOW_MAP: Record<string, number> = {
   "30m": 30 * 60 * 1000,

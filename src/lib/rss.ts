@@ -3,7 +3,7 @@ import type { Headline } from "./types";
 import { RSS_FEEDS } from "./feeds";
 
 const parser = new Parser({
-  timeout: 8000,
+  timeout: 5000,
   headers: {
     "User-Agent": "Mozilla/5.0 (compatible; HeadlineTreemap/1.0)",
   },

@@ -111,6 +111,19 @@ export default function Treemap({ words, selectedWord, onSelect, grouped }: Prop
 
     layout(root);
 
+    // ── ClipPath per tile (prevents text bleeding past tile edges) ───────────
+    const uid   = Math.random().toString(36).slice(2);
+    const defs  = d3.select(svg).append("defs");
+    const leafNodes = root.leaves() as d3.HierarchyRectangularNode<TreeNode>[];
+    leafNodes.forEach((d, i) => {
+      defs.append("clipPath")
+        .attr("id", `tc-${uid}-${i}`)
+        .append("rect")
+        .attr("width",  Math.max(0, d.x1 - d.x0))
+        .attr("height", Math.max(0, d.y1 - d.y0))
+        .attr("rx", 3);
+    });
+
     const g = d3.select(svg).append("g");
 
     // ── Grouped mode: render category backgrounds + labels ───────────────────
@@ -149,7 +162,7 @@ export default function Treemap({ words, selectedWord, onSelect, grouped }: Prop
     }
 
     // ── Leaf tiles (words) ────────────────────────────────────────────────────
-    const leaves = root.leaves() as d3.HierarchyRectangularNode<TreeNode>[];
+    const leaves = leafNodes;
 
     const cellWidth  = (d: d3.HierarchyRectangularNode<TreeNode>) => d.x1 - d.x0;
     const cellHeight = (d: d3.HierarchyRectangularNode<TreeNode>) => d.y1 - d.y0;
@@ -160,6 +173,7 @@ export default function Treemap({ words, selectedWord, onSelect, grouped }: Prop
       .join("g")
       .attr("class", "tile")
       .attr("transform", (d) => `translate(${d.x0},${d.y0})`)
+      .attr("clip-path", (_, i) => `url(#tc-${uid}-${i})`)
       .style("cursor", "pointer")
       .on("click", (_, d) => { if (d.data.wordData) onSelect(d.data.wordData); });
 
@@ -181,39 +195,52 @@ export default function Treemap({ words, selectedWord, onSelect, grouped }: Prop
 
     // Word label (always when tile is wide enough)
     const hasTwoLines = (d: d3.HierarchyRectangularNode<TreeNode>) =>
-      cellWidth(d) > 50 && cellHeight(d) > 52;
+      cellWidth(d) > 55 && cellHeight(d) > 56;
+
+    // Truncate text so it fits reasonably in a narrow tile
+    const labelText = (d: d3.HierarchyRectangularNode<TreeNode>) => {
+      const word = (d.data.wordData?.word ?? "").toUpperCase();
+      const w = cellWidth(d);
+      // Bigrams on narrow tiles: shorten to first word only
+      if (word.includes(" ") && w < 80) return word.split(" ")[0];
+      return word;
+    };
+
+    const labelFontSize = (d: d3.HierarchyRectangularNode<TreeNode>) => {
+      const w  = cellWidth(d);
+      const h  = cellHeight(d);
+      const area = w * h;
+      const isBigram = (d.data.wordData?.word ?? "").includes(" ");
+      if (area > 20000) return isBigram ? "14px" : "17px";
+      if (area > 8000)  return isBigram ? "11px" : "13px";
+      if (area > 3000)  return "10px";
+      return "9px";
+    };
 
     cell
-      .filter((d) => cellWidth(d) > 36 && cellHeight(d) > 22)
+      .filter((d) => cellWidth(d) > 30 && cellHeight(d) > 18)
       .append("text")
       .attr("x", (d) => cellWidth(d) / 2)
-      .attr("y", (d) => hasTwoLines(d) ? cellHeight(d) / 2 - 8 : cellHeight(d) / 2)
+      .attr("y", (d) => hasTwoLines(d) ? cellHeight(d) / 2 - 9 : cellHeight(d) / 2)
       .attr("text-anchor",      "middle")
       .attr("dominant-baseline","middle")
       .attr("fill",        "white")
       .attr("font-weight", "700")
       .attr("font-family", "system-ui, sans-serif")
-      .attr("font-size",   (d) => {
-        const area = cellWidth(d) * cellHeight(d);
-        const isBigram = d.data.wordData?.word.includes(" ") ?? false;
-        if (area > 20000) return isBigram ? "15px" : "18px";
-        if (area > 8000)  return isBigram ? "12px" : "14px";
-        if (area > 3000)  return "11px";
-        return "10px";
-      })
+      .attr("font-size",   labelFontSize)
       .style("pointer-events", "none")
-      .text((d) => (d.data.wordData?.word ?? "").toUpperCase());
+      .text(labelText);
 
-    // "N mentions" sub-label
+    // "N sources" sub-label
     cell
       .filter((d) => hasTwoLines(d))
       .append("text")
       .attr("x", (d) => cellWidth(d) / 2)
-      .attr("y", (d) => cellHeight(d) / 2 + 10)
+      .attr("y", (d) => cellHeight(d) / 2 + 11)
       .attr("text-anchor",      "middle")
       .attr("dominant-baseline","middle")
-      .attr("fill",       "rgba(255,255,255,0.60)")
-      .attr("font-size",  "11px")
+      .attr("fill",       "rgba(255,255,255,0.55)")
+      .attr("font-size",  "10px")
       .attr("font-family","system-ui, sans-serif")
       .style("pointer-events", "none")
       .text((d) => {

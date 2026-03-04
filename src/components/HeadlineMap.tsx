@@ -8,7 +8,7 @@ import type { WordData, TrendsResponse } from "@/lib/types";
 
 const Treemap = dynamic(() => import("./Treemap"), { ssr: false });
 
-const REFRESH_INTERVAL_MS = 10 * 60 * 1000;
+const REFRESH_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
 
 const TIME_WINDOWS = [
   { label: "30m", value: "30m" },
@@ -17,6 +17,12 @@ const TIME_WINDOWS = [
   { label: "24h", value: "24h" },
   { label: "5d",  value: "5d"  },
 ] as const;
+
+interface WindowCacheEntry {
+  words: WordData[];
+  fetchedAt: number;   // ms timestamp
+  fetchedAtIso: string;
+}
 
 interface Props {
   initialData: TrendsResponse | null;
@@ -31,30 +37,87 @@ function formatTime(iso: string): string {
 }
 
 export default function HeadlineMap({ initialData }: Props) {
-  const [words, setWords] = useState<WordData[]>(initialData?.words ?? []);
-  const [fetchedAt, setFetchedAt] = useState<string>(initialData?.fetchedAt ?? "");
+  const [words, setWords]               = useState<WordData[]>(initialData?.words ?? []);
+  const [fetchedAt, setFetchedAt]       = useState<string>(initialData?.fetchedAt ?? "");
   const [selectedWord, setSelectedWord] = useState<WordData | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [showSources, setShowSources] = useState(false);
+  const [loading, setLoading]           = useState(false);
+  const [error, setError]               = useState<string | null>(null);
+  const [showSources, setShowSources]   = useState(false);
   const [screenshotting, setScreenshotting] = useState(false);
-  const [grouped, setGrouped] = useState(false);
-  const [timeWindow, setTimeWindow] = useState("24h");
-  const treemapContainerRef = useRef<HTMLDivElement>(null);
+  const [grouped, setGrouped]           = useState(false);
+  const [timeWindow, setTimeWindow]     = useState("24h");
+  const treemapContainerRef             = useRef<HTMLDivElement>(null);
 
-  const refresh = useCallback(async (win?: string) => {
+  // Per-window client-side cache of API responses
+  const windowCache     = useRef(new Map<string, WindowCacheEntry>());
+  // Per-window previous word counts — used to compute client-side momentum
+  const windowPrevCounts = useRef(new Map<string, Map<string, number>>());
+
+  /** Overlay client-computed momentum onto words, replacing whatever the server sent. */
+  const applyClientMomentum = useCallback((rawWords: WordData[], win: string): WordData[] => {
+    const prev = windowPrevCounts.current.get(win);
+    if (!prev) return rawWords;
+    return rawWords.map((w) => ({
+      ...w,
+      momentum: w.count - (prev.get(w.word) ?? 0),
+    }));
+  }, []);
+
+  /**
+   * Fetch one window from the API, apply client-side momentum, and update caches.
+   * Returns the processed words, or null on network error.
+   */
+  const fetchWindow = useCallback(async (win: string): Promise<{ words: WordData[]; fetchedAtIso: string } | null> => {
+    const res = await fetch(`/api/trends?window=${win}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data: TrendsResponse = await res.json();
+
+    // Compute momentum against previous snapshot for this window
+    const wordsWithMomentum = applyClientMomentum(data.words, win);
+
+    // Save raw counts as the new baseline for next refresh
+    windowPrevCounts.current.set(win, new Map(data.words.map((w) => [w.word, w.count])));
+
+    // Cache the processed result
+    windowCache.current.set(win, {
+      words: wordsWithMomentum,
+      fetchedAt: Date.now(),
+      fetchedAtIso: data.fetchedAt,
+    });
+
+    return { words: wordsWithMomentum, fetchedAtIso: data.fetchedAt };
+  }, [applyClientMomentum]);
+
+  /**
+   * Main refresh function.
+   * - force=false (default): serve from client cache if < 10 min old.
+   * - force=true: bypass cache, hit the API.
+   */
+  const refresh = useCallback(async (win?: string, force = false) => {
     const w = win ?? timeWindow;
+
+    // Serve from client cache if still fresh
+    if (!force) {
+      const cached = windowCache.current.get(w);
+      if (cached && Date.now() - cached.fetchedAt < REFRESH_INTERVAL_MS) {
+        setWords(cached.words);
+        setFetchedAt(cached.fetchedAtIso);
+        if (selectedWord) {
+          setSelectedWord(cached.words.find((x) => x.word === selectedWord.word) ?? null);
+        }
+        return;
+      }
+    }
+
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/trends?window=${w}`);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data: TrendsResponse = await res.json();
-      setWords(data.words);
-      setFetchedAt(data.fetchedAt);
+      const result = await fetchWindow(w);
+      if (!result) return;
+      setWords(result.words);
+      setFetchedAt(result.fetchedAtIso);
       if (selectedWord) {
-        const updated = data.words.find((x) => x.word === selectedWord.word);
-        setSelectedWord(updated ?? null);
+        setSelectedWord(result.words.find((x) => x.word === selectedWord.word) ?? null);
       }
     } catch (e) {
       setError("Failed to refresh headlines.");
@@ -62,23 +125,70 @@ export default function HeadlineMap({ initialData }: Props) {
     } finally {
       setLoading(false);
     }
-  }, [timeWindow, selectedWord]);
+  }, [timeWindow, selectedWord, fetchWindow]);
 
+  /** Force-refresh current window, then silently pre-fetch all other windows. */
+  const handleRefresh = useCallback(async () => {
+    const w = timeWindow;
+    windowCache.current.clear(); // invalidate all cached windows
+
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await fetchWindow(w);
+      if (!result) return;
+      setWords(result.words);
+      setFetchedAt(result.fetchedAtIso);
+      if (selectedWord) {
+        setSelectedWord(result.words.find((x) => x.word === selectedWord.word) ?? null);
+      }
+    } catch (e) {
+      setError("Failed to refresh headlines.");
+      console.error(e);
+      return;
+    } finally {
+      setLoading(false);
+    }
+
+    // Pre-fetch other windows in background (server cache is warm now)
+    const otherWindows = TIME_WINDOWS.map((tw) => tw.value).filter((v) => v !== w);
+    Promise.all(otherWindows.map((win) => fetchWindow(win).catch(() => null)));
+  }, [timeWindow, selectedWord, fetchWindow]);
+
+  /** Switching windows uses the client cache — no spinner, no API call if fresh. */
   const handleWindowChange = useCallback((win: string) => {
     setTimeWindow(win);
-    refresh(win);
-  }, [refresh]);
+    const cached = windowCache.current.get(win);
+    if (cached && Date.now() - cached.fetchedAt < REFRESH_INTERVAL_MS) {
+      setWords(cached.words);
+      setFetchedAt(cached.fetchedAtIso);
+      if (selectedWord) {
+        setSelectedWord(cached.words.find((x) => x.word === selectedWord.word) ?? null);
+      }
+    } else {
+      // Not cached yet — fetch it (will show loading only for this window)
+      refresh(win, false);
+    }
+  }, [selectedWord, refresh]);
 
+  // Auto-refresh on interval (force = true to bypass client cache)
   useEffect(() => {
-    const id = setInterval(() => refresh(), REFRESH_INTERVAL_MS);
+    const id = setInterval(() => {
+      // Force-refresh current window and invalidate others
+      windowCache.current.clear();
+      refresh(undefined, true);
+    }, REFRESH_INTERVAL_MS);
     return () => clearInterval(id);
   }, [refresh]);
 
+  // Initial load — if SSR provided no data, fetch now
   useEffect(() => {
-    if (!initialData || initialData.words.length === 0) refresh();
+    if (!initialData || initialData.words.length === 0) {
+      refresh(undefined, true);
+    }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Top trending words (positive momentum) — only populated in 24h window
+  // Top trending words (positive momentum) — available for all windows now
   const trending = useMemo(() =>
     words.filter((w) => w.momentum > 0).sort((a, b) => b.momentum - a.momentum).slice(0, 7),
     [words]
@@ -181,11 +291,11 @@ export default function HeadlineMap({ initialData }: Props) {
 
           <button onClick={() => setShowSources(true)} className="text-xs px-3 py-1.5 rounded bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-white transition-colors">Sources</button>
           <button onClick={handleScreenshot} disabled={screenshotting || words.length === 0} className="text-xs px-3 py-1.5 rounded bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed">{screenshotting ? "Saving…" : "Screenshot"}</button>
-          <button onClick={() => refresh()} disabled={loading} className="text-xs px-3 py-1.5 rounded bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed">{loading ? "Loading…" : "Refresh"}</button>
+          <button onClick={handleRefresh} disabled={loading} className="text-xs px-3 py-1.5 rounded bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed">{loading ? "Loading…" : "Refresh"}</button>
         </div>
       </header>
 
-      {/* ── Trending strip (only when 24h window has momentum data) ── */}
+      {/* ── Trending strip (positive momentum across any window) ── */}
       {trending.length > 0 && (
         <div className="flex items-center gap-1.5 px-4 py-1.5 border-b border-gray-800 bg-gray-950 shrink-0 overflow-x-auto scrollbar-none">
           <span className="text-xs font-bold text-green-400 shrink-0 mr-1 tracking-wide">TRENDING ↑</span>

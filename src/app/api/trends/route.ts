@@ -47,9 +47,9 @@ export async function GET(req: NextRequest) {
 
     const filtered = filterByWindow(headlines, win);
 
-    // Momentum only valid for 24h — other windows get all-gray tiles (honest)
-    const prevCounts = win === "24h" ? getPrevCounts() : new Map<string, number>();
-    const words = processHeadlines(filtered, prevCounts);
+    // Momentum is computed client-side by comparing successive fetches.
+    // Server always returns momentum=0; client overlays its own delta.
+    const words = processHeadlines(filtered, new Map<string, number>());
 
     // Attach per-word sparkline history
     const wordsWithHistory = words.map((w) => ({

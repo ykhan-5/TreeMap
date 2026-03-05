@@ -53,6 +53,20 @@ export default function HeadlineMap({ initialData }: Props) {
   // Per-window previous word counts — used to compute client-side momentum
   const windowPrevCounts = useRef(new Map<string, Map<string, number>>());
 
+  // Restore previous counts from localStorage on mount so momentum survives page refresh
+  useEffect(() => {
+    try {
+      TIME_WINDOWS.forEach(({ value: win }) => {
+        const raw = localStorage.getItem(`treemap_prev_${win}`);
+        if (!raw) return;
+        const parsed = JSON.parse(raw) as { counts: Record<string, number>; savedAt: number };
+        // Discard baselines older than 2 hours to avoid stale momentum
+        if (Date.now() - parsed.savedAt > 2 * 60 * 60 * 1000) return;
+        windowPrevCounts.current.set(win, new Map(Object.entries(parsed.counts)));
+      });
+    } catch {}
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   /** Overlay client-computed momentum onto words, replacing whatever the server sent. */
   const applyClientMomentum = useCallback((rawWords: WordData[], win: string): WordData[] => {
     const prev = windowPrevCounts.current.get(win);
@@ -77,6 +91,12 @@ export default function HeadlineMap({ initialData }: Props) {
 
     // Save raw counts as the new baseline for next refresh
     windowPrevCounts.current.set(win, new Map(data.words.map((w) => [w.word, w.count])));
+
+    // Persist to localStorage so momentum survives page refresh
+    try {
+      const counts = Object.fromEntries(data.words.map((w) => [w.word, w.count]));
+      localStorage.setItem(`treemap_prev_${win}`, JSON.stringify({ counts, savedAt: Date.now() }));
+    } catch {}
 
     // Cache the processed result
     windowCache.current.set(win, {
